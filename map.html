@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang='en'>
+  <head>
+    <meta charset='utf-8' />
+    <title>Delivery App</title>
+    <meta name='viewport' content='width=device-width, initial-scale=1' />
+    <script src='https://npmcdn.com/@turf/turf/turf.min.js'></script>
+    <script src='https://api.tiles.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.js'></script>
+    <link href='https://api.tiles.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.css' rel='stylesheet' />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      #map {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        right: 0;
+        left: 0;
+      }
+      .truck {
+        width: 20px;
+        height: 20px;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        background: #3887be;
+        pointer-events: none;
+      }
+      #over{
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        z-index: 1000;
+      }
+    </style>
+  </head>
+  <body>
+    <div id='map'>
+      
+    </div>
+    <input type='text' id="over" width="100">
+    <script>
+      const truckLocation = [-112.073555
+      , 33.44793];
+      const warehouseLocation = [-110.965274,32.228759];
+      const lastAtRestaurant = 0;
+      let keepTrack = [];
+      const pointHopper = {};
+
+      // Add your access token
+ mapboxgl.accessToken = 'pk.eyJ1IjoiYWFhbm9ydGhlYXN0IiwiYSI6ImNsOHU2Ym56eTAwanozcHBkbTJ5bm5qa2UifQ.8Mgc2UYdXE8_T0JQmqTsiw';
+
+      // Initialize a map
+      const map = new mapboxgl.Map({
+        container: 'map', // container id
+        style: 'mapbox://styles/mapbox/light-v11', // stylesheet location
+        center: truckLocation, // starting position
+        zoom: 12 // starting zoom
+      });
+      const warehouse = turf.featureCollection([turf.point(warehouseLocation)]);
+      const dropoffs = turf.featureCollection([]);
+      const nothing = turf.featureCollection([]);
+      map.on('load', async () => {
+        const marker = document.createElement('div');
+        marker.classList = 'truck';
+        
+        map.addLayer({
+            id: 'warehouse',
+            type: 'circle',
+            source: {
+              data: warehouse,
+              type: 'geojson'
+            },
+            paint: {
+              'circle-radius': 20,
+              'circle-color': 'white',
+              'circle-stroke-color': '#3887be',
+              'circle-stroke-width': 3
+            }
+          });
+          map.addLayer({
+            id: 'dropoffs-symbol',
+            type: 'symbol',
+            source: {
+              data: dropoffs,
+              type: 'geojson'
+            },
+            layout: {
+              'icon-allow-overlap': true,
+              'icon-ignore-placement': true,
+              'icon-image': 'marker-15'
+            }
+          });
+          // Create a symbol layer on top of circle layer
+          map.addLayer({
+            id: 'warehouse-symbol',
+            type: 'symbol',
+            source: {
+              data: warehouse,
+              type: 'geojson'
+            },
+            layout: {
+              'icon-image': 'grocery-15',
+              'icon-size': 1
+            },
+            paint: {
+              'text-color': '#3887be'
+            }
+          });
+       map.addSource('route', {
+  type: 'geojson',
+  data: nothing
+});
+
+map.addLayer(
+  {
+    id: 'routeline-active',
+    type: 'line',
+    source: 'route',
+    layout: {
+      'line-join': 'round',
+      'line-cap': 'round'
+    },
+    paint: {
+      'line-color': '#3887be',
+      'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 22, 12]
+    }
+  },
+  'waterway-label'
+);
+      
+      // getting point on the map click
+          await map.on('click', addWaypoints);
+          // Create a new marker
+        new mapboxgl.Marker(marker).setLngLat(truckLocation).addTo(map);
+      });
+
+      async function addWaypoints(event) {
+        // When the map is clicked, add a new drop off point
+        // and update the `dropoffs-symbol` layer
+    
+        await newDropoff(map.unproject(event.point));
+       updateDropoffs(dropoffs); 
+      }
+
+      async function newDropoff(coordinates) {
+
+ // Store the clicked point as a new GeoJSON feature with
+  // two properties: `orderTime` and `key`
+  const pt = turf.point([coordinates.lng, coordinates.lat], {
+    orderTime: Date.now(),
+    key: Math.random()
+  });
+  dropoffs.features.push(pt);
+  pointHopper[pt.properties.key] = pt;
+
+  // Make a request to the Optimization API
+  const query = await fetch(assembleQueryURL(), { method: 'GET' });
+
+  const response = await query.json();
+  console.log(response)
+console.log(response.trips[0].geometry)
+  // Create an alert for any requests that return an error
+  if (response.code !== 'Ok') {
+    const handleMessage =
+      response.code === 'InvalidInput'
+        ? 'Refresh to start a new route. For more information: https://docs.mapbox.com/api/navigation/optimization/#optimization-api-errors'
+        : 'Try a different point.';
+    alert(`${response.code} - ${response.message}\n\n${handleMessage}`);
+    // Remove invalid point
+    dropoffs.features.pop();
+    delete pointHopper[pt.properties.key];
+    return;
+  }
+
+  // Create a GeoJSON feature collection
+  const routeGeoJSON = turf.featureCollection([
+    turf.feature(response.trips[0].geometry)
+  ]);
+  // Update the `route` source by getting the route source
+  // and setting the data equal to routeGeoJSON
+  map.getSource('route').setData(routeGeoJSON);
+
+
+
+       // dropoffs.features.push(pt);
+      }
+      
+    function updateDropoffs(geojson) {
+        map.getSource('dropoffs-symbol').setData(geojson);
+       
+       
+      } 
+      
+
+
+// Here you'll specify all the parameters necessary for requesting a response from the Optimization API
+function assembleQueryURL() {
+    // Store the location of the truck in a constant called coordinates
+    let coordinates = [truckLocation];
+    const distributions = [];
+    keepTrack = [truckLocation];
+    console.log("truckLocation")
+    console.log(truckLocation)
+  
+    // Create an array of GeoJSON feature collections for each point
+    const restJobs = Object.keys(pointHopper).map((key) => pointHopper[key]);
+    console.log("restJobs");
+   console.log(restJobs);
+    // If there are any orders from this restaurant
+    if (restJobs.length > 0) {
+      // Check to see if the request was made after visiting the restaurant
+      const needToPickUp =
+        restJobs.filter((d) => {
+          return d.properties.orderTime > lastAtRestaurant;
+        }).length > 0;
+  
+      // If the request was made after picking up from the restaurant,
+      // Add the restaurant as an additional stop
+      console.log(needToPickUp)
+      let restaurantIndex;
+      if (needToPickUp) {
+         restaurantIndex = coordinates.length;
+        console.log("restaurantIndex")
+        console.log(restaurantIndex)
+        // Add the restaurant as a coordinate
+        coordinates.push(warehouseLocation);
+        // push the restaurant itself into the array
+        keepTrack.push(pointHopper.warehouse);
+      }
+  
+      for (const job of restJobs) {
+        // Add dropoff to list
+        keepTrack.push(job);
+        coordinates.push(job.geometry.coordinates);
+        // if order not yet picked up, add a reroute
+        if (needToPickUp && job.properties.orderTime > lastAtRestaurant) {
+          distributions.push(`${restaurantIndex},${coordinates.length - 1}`);
+        }
+      }
+    }
+    coordinates=[
+    [
+        -112.073865,
+        33.447948
+    ],
+    [
+        -112.073834,
+        33.448196
+    ],
+    [
+        -112.075098,
+        33.448258
+    ],
+    [
+        -112.075112,
+        33.447148
+    ],
+    [
+        -112.061983,
+        33.447214
+    ],
+    [
+        -112.058432,
+        33.447244
+    ],
+    [
+        -112.049735,
+        33.447299
+    ],
+    [
+        -112.045239,
+        33.447311
+    ],
+    [
+        -112.042237,
+        33.447312
+    ],
+    [
+        -112.038934,
+        33.447166
+    ],
+    [
+        -112.038135,
+        33.446479
+    ],
+    [
+        -112.03625,
+        33.427745
+    ],
+    [
+        -112.009162,
+        33.411332
+    ],
+    [
+        -111.984299,
+        33.410808
+    ],
+    [
+        -111.967681,
+        33.397497
+    ],
+    [
+        -111.972418,
+        33.309071
+    ],
+    [
+        -111.966529,
+        33.278968
+    ],
+    [
+        -111.691035,
+        32.925378
+    ],
+    [
+        -111.681267,
+        32.816118
+    ],
+    [
+        -111.379395,
+        32.637905
+    ],
+    [
+        -111.262206,
+        32.494954
+    ],
+    [
+        -111.123571,
+        32.395034
+    ],
+    [
+        -110.986413,
+        32.241801
+    ],
+    [
+        -110.984457,
+        32.235644
+    ],
+    [
+        -110.965656,
+        32.235926
+    ],
+    [
+        -110.965611,
+        32.229028
+    ],
+    [
+        -110.96524,
+        32.229046
+    ],
+    [
+        -110.965246,
+        32.228845
+    ],
+    [
+        -110.965272,
+        32.228845
+    ]
+  ]
+  if(coordinates.length > 12){
+  coordinates.splice(1,coordinates.length-12)
+  }
+  console.log(distributions)
+    console.log(distributions.length)
+    console.log(coordinates.join(";"))
+    
+    // const response = 
+  // `https://api.mapbox.com/directions/v5/mapbox/driving/-112.073555,33.44793;-112.0466,33.03948?steps=true&geometries=geojson&access_token=${mapboxgl.accessToken}`
+
+    // return response;
+// Set the profile to `driving`
+    // Coordinates will include the current location of the truck,
+   return `https://api.mapbox.com/optimized-trips/v1/mapbox/driving/${coordinates.join(
+      ';'
+    )}?distributions=${distributions.join(
+      ';'
+     )}&overview=full&steps=true&geometries=geojson&roundtrip=false&source=first&destination=last&access_token=${
+        mapboxgl.accessToken
+    }`;
+  
+}
+
+
+
+
+
+
+    </script>
+  </body>
+</html>
