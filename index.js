@@ -7,7 +7,7 @@ import { useRef, useCallback } from 'react';
 import { useEffect } from 'react';
 import * as turf from '@turf/turf';
 mapboxgl.accessToken =
-  'pk.eyJ1IjoiYWFhbm9ydGhlYXN0IiwiYSI6ImNsOHU2Ym56eTAwanozcHBkbTJ5bm5qa2UifQ.8Mgc2UYdXE8_T0JQmqTsiw';
+  'your_access_token';
 function TripForm() {
   //intializing the longititude and lattitudes
   const coordinates = [-112.073555, 33.44793];
